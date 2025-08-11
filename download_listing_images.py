@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, os, re, pathlib, urllib.parse
+import argparse, os, re, pathlib, urllib.parse, zipfile, shutil
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 IMAGE_MIN_BYTES = 120_000  # skip thumbnails
@@ -50,7 +50,7 @@ def collect_srcset_urls(page):
     return urls
 
 def main():
-    ap = argparse.ArgumentParser(description="Download full gallery images from car listings")
+    ap = argparse.ArgumentParser(description="Download full gallery images from car listings and zip them")
     ap.add_argument("urls", nargs="+", help="Listing URLs")
     ap.add_argument("-o", "--outdir", default="car_images")
     ap.add_argument("--max-clicks", type=int, default=60)
@@ -111,8 +111,7 @@ def main():
 
             page.on("response", on_response)
 
-            # Expose as many images as possible
-            # 1) Scroll to trigger lazy loads
+            # Scroll to trigger lazy loads
             try:
                 height = page.evaluate("() => document.body.scrollHeight")
             except:
@@ -121,7 +120,7 @@ def main():
                 page.mouse.wheel(0, 600)
                 page.wait_for_timeout(200)
 
-            # 2) Click common "next" controls
+            # Click common "next" controls
             def try_click_next():
                 for sel in NEXT_SELECTORS:
                     loc = page.locator(sel)
@@ -149,7 +148,7 @@ def main():
                 if stale_advance >= 5:
                     break
 
-            # 3) Fallback: pull highest srcset candidates directly
+            # Fallback: pull highest srcset candidates directly
             for u in collect_srcset_urls(page):
                 if u in saved:
                     continue
@@ -177,7 +176,19 @@ def main():
                     print(f"Fetch error: {e}")
 
             page.close()
-            print(f"Done. {len(saved)} images saved to {dest}")
+
+            # Zip images and remove the folder
+            if saved:
+                zip_path = os.path.join(args.outdir, f"{folder}.zip")
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for fpath in sorted(saved.values()):
+                        zf.write(fpath, arcname=os.path.basename(fpath))
+                shutil.rmtree(dest, ignore_errors=True)
+                print(f"Zipped to {zip_path}")
+            else:
+                shutil.rmtree(dest, ignore_errors=True)
+                print("No images saved")
+
         browser.close()
 
 if __name__ == "__main__":
